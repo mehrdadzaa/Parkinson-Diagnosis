@@ -1,0 +1,91 @@
+import os
+import librosa
+import numpy as np
+import pandas as pd
+
+def calculate_jitter(f0_values):
+    if len(f0_values) > 1:
+        diffs = np.diff(f0_values)
+        jitter = np.mean(np.abs(diffs)) / np.mean(f0_values)
+    else:
+        jitter = 0
+    return jitter
+
+def calculate_shimmer(db_values):
+    if len(db_values) > 1:
+        diffs = np.diff(db_values)
+        shimmer = np.mean(np.abs(diffs)) / np.mean(db_values)
+    else:
+        shimmer = 0
+    return shimmer
+
+def calculate_voicing_rate(pitches):
+    voiced_frames = np.sum(pitches > 0)
+    total_frames = pitches.size
+    voicing_rate = voiced_frames / total_frames if total_frames > 0 else 0
+    return voicing_rate
+
+def calculate_spectral_centroid(y, sr):
+    return np.mean(librosa.feature.spectral_centroid(y=y, sr=sr))
+
+def calculate_lz2(y):
+    def lempel_ziv_complexity(signal):
+        n = len(signal)
+        i, j, k = 0, 1, 0
+        substrings = set()
+        while j < n:
+            if signal[j] != signal[j - 1]:
+                substrings.add(tuple(signal[i:j]))
+                i = j
+            j += 1
+        substrings.add(tuple(signal[i:]))
+        return len(substrings) / len(signal)
+
+    return lempel_ziv_complexity(list(y))
+
+
+def extract_features(file_path):
+    y, sr = librosa.load(file_path)
+    pitches, magnitudes = librosa.piptrack(y=y, sr=sr)
+    pitch_values = pitches[pitches > 0]
+    amplitude_values = magnitudes[magnitudes > 0]
+    db_values = librosa.amplitude_to_db(amplitude_values, ref=np.max)
+    mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+    mfccs_mean = np.mean(mfccs, axis=1)
+
+    features = {
+        "Mean F0": np.mean(pitch_values),
+        "STD F0": np.std(pitch_values),
+        "Max F0": np.max(pitch_values),
+        "Min F0": np.min(pitch_values),
+        "Voicing Rate": calculate_voicing_rate(pitch_values),
+        "Spectral Centroid": calculate_spectral_centroid(y, sr),
+        "Jitter": calculate_jitter(pitch_values),
+        "Shimmer": calculate_shimmer(db_values),
+        "LZ-2": calculate_lz2(y),
+    }
+
+    for i, mfcc_mean in enumerate(mfccs_mean):
+        features[f"MFCC{i}"] = mfcc_mean
+
+    return features
+
+# Directory containing audio files
+directory = '/content/Allrec5'
+
+# Prepare DataFrame to store features
+df_features = pd.DataFrame()
+
+# Iterate over each file in the directory
+for filename in os.listdir(directory):
+    if filename.endswith(".wav"):
+        file_path = os.path.join(directory, filename)
+        features = extract_features(file_path)
+        features['Filename'] = filename
+        df_temp = pd.DataFrame([features])
+        df_features = pd.concat([df_features, df_temp], ignore_index=True)
+
+# Save the features to a CSV file
+csv_file = '/content/voice_features.csv'
+df_features.to_csv(csv_file, index=False)
+print(f"Features extracted and saved to {csv_file}")
